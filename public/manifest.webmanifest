@@ -1,0 +1,20 @@
+{
+  "name": "SMIS — School Management Information System",
+  "short_name": "SMIS",
+  "description": "Students, staff, academics, attendance, finance, parents and reports in one app.",
+  "start_url": "/#/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#f4f6f5",
+  "theme_color": "#0f6b5c",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Take attendance", "url": "/#/attendance" },
+    { "name": "Enter marks", "url": "/#/marks" },
+    { "name": "Finance", "url": "/#/finance" },
+    { "name": "Reports", "url": "/#/reports" }
+  ]
+}
