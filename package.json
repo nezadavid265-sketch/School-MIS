@@ -1,0 +1,46 @@
+{
+  "name": "smis",
+  "version": "1.0.0",
+  "description": "School Management Information System — hybrid web, LAN and desktop app",
+  "main": "desktop/main.js",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
+    "reset-demo": "node -e \"require('fs').rmSync('data',{recursive:true,force:true})\" && node server/server.js",
+    "desktop": "electron .",
+    "build:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "rw.smis.desktop",
+    "productName": "SMIS",
+    "files": [
+      "desktop/**",
+      "server/**",
+      "public/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "author": "nezadavid265-sketch"
+}
