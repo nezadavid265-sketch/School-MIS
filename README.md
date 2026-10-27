@@ -24,7 +24,7 @@ Open http://localhost:3000. On Windows you can also double-click `start-smis.bat
 A demo database (fictional school, 132 students, 18 staff, a year of attendance, marks and payments) is created automatically in `data/smis.db` on first run. To reset it, delete the `data/` folder.
 
 **Demo accounts** — all use password `demo1234` (tap a role on the sign-in screen):
-`director`, `headteacher`, `teacher`, `bursar`, `hr`, `admin`, `parent`, `student`, `sysadmin`.
+`director`, `headteacher`, `teacher`, `bursar`, `hr`, `admin`, `parent`, `student`, `sysadmin`, `nurse`.
 
 > Change or disable every demo account before real student data is entered.
 
@@ -39,6 +39,19 @@ A demo database (fictional school, 132 students, 18 staff, a year of attendance,
 - **Academics setup** — classes/streams, subjects, teacher assignments, assessments, terms.
 - **Finance** — fee structures, bulk term invoicing, payments by cash/bank/Mobile Money with **duplicate-reference protection**, printable receipts, **reversals instead of deletion**, expenses with director approval, budgets vs actual, cash flow.
 - **Payroll** — monthly runs from staff salaries, draft → paid.
+- **Admissions** — application pipeline (submitted → interview → accepted/waitlisted/rejected); enrolling an accepted applicant creates the student record and the current-term invoice.
+- **Promotion & graduation** — end-of-year promote / repeat / graduate per student, suggested from approved results and the pass mark, stored in each student's enrollment history.
+- **Homework** — set per class and subject; students and parents see it in their portal.
+- **Syllabus coverage** — units per class and subject marked not started / in progress / covered, with a coverage report.
+- **Staff performance reviews** — termly ratings, strengths and areas to improve.
+- **Payment plans** — instalments per invoice, automatically marked paid / overdue from real payments.
+- **Bank & Mobile Money reconciliation** — import a statement (CSV or paste); lines are matched to receipts by reference, mismatches flagged, and unreceipted money posted to the right invoice (the admission number in the narration is suggested automatically).
+- **Procurement** — suppliers and purchase orders: draft → director approval → received → paid, which posts an approved expense automatically.
+- **Transport** — vehicles (insurance & inspection alerts), routes, drivers, riders, seat limits.
+- **Boarding** — dormitories, bed allocation with capacity and boys/girls checks.
+- **Health & welfare** — confidential clinic visits, allergies, conditions and vaccinations (nurse and head teacher only; every view is logged).
+- **SMS & email** — send to all guardians, one class, guardians of absent students, guardians with balances, or staff, with {name}/{balance} personalisation and live phone preview. Messages are queued; set `SMIS_MESSAGE_WEBHOOK` to your SMS/email gateway's HTTP endpoint to deliver them.
+- **Documents & certificates** — numbered student/staff ID cards, admission letters, fee statements, transfer, leaving and good-conduct certificates, employment letters, with a document register.
 - **Library, Inventory, Discipline, Announcements, Calendar.**
 - **Parent / student portal** — attendance, results, fee balance, invoices, timetable, announcements — only for their own children.
 - **Reports** — enrollment, attendance, absentees, academic & subject performance, fee collection, arrears, budget vs actual, cash flow, staff, payroll, executive summary. Filter by term/class/date range, export **CSV / Excel**, print or save as **PDF**.
@@ -47,14 +60,15 @@ A demo database (fictional school, 132 students, 18 staff, a year of attendance,
 ## Ease of use
 
 - **Ctrl + K** (or `/`) opens a command palette: search students, receipts, invoices, staff or jump to any page/action.
-- English · **Kinyarwanda** · Français menus, light/dark theme, adjustable text size.
+- English · **Kinyarwanda** · Français menus, two colour themes — **Aurora** (deep night with teal/violet glows, default) and **Sage** (soft green) — and adjustable text size.
 - Responsive: sidebar on computers, bottom navigation on phones, tables become cards on small screens.
 - Every screen only shows what the signed-in role is allowed to use.
 
 ## Security built in
 
 - Passwords hashed with scrypt; login throttling (8 failures / 10 min).
-- HttpOnly, SameSite=Strict session cookies; 45-minute idle timeout; sessions killed on password change/reset.
+- **Two-step sign-in (TOTP)** with Google/Microsoft Authenticator — recommended for director, bursar, HR, admin and system admin; the system admin can reset a lost phone.
+- HttpOnly, SameSite=Strict session cookies; 45-minute idle timeout and 8-hour maximum session; sessions killed on password change/reset.
 - Role-based access checked **on the server** for every request (a parent cannot open another child's profile; a teacher only sees their own classes and never sees salaries).
 - CSRF header check, strict Content-Security-Policy, security headers.
 - Audit log for sign-ins, failed logins, creates/updates, payments, reversals, approvals, exports, profile views and backups.
@@ -75,7 +89,15 @@ The desktop app's **SMIS** menu switches between:
 - **School server** — the database lives on this computer (`%APPDATA%/smis/smis.db`) and other devices connect over the school network; *Copy school network address* shows the URL to share.
 - **Connect to server** — this computer uses a central SMIS server (LAN or online).
 
-If the bundled Electron runtime does not support `node:sqlite`, the app falls back to the system's Node.js 22.5+.
+Electron 37 ships Node 22 with `node:sqlite`, so the desktop app needs nothing else installed. If port 3000 is busy it uses the next free port.
+
+## Tests
+
+```bash
+npm test
+```
+
+18 end-to-end API tests run against a throwaway database: permissions per role, CSRF, payments and duplicate references, finance totals, marks approval, timetable clashes, admissions, promotion, reconciliation, purchase orders, boarding rules, messaging, documents, two-step sign-in, every report and the audit log.
 
 ## Online deployment
 
@@ -85,6 +107,7 @@ Run `node server/server.js` on any Node 22.5+ host behind an HTTPS reverse proxy
 
 ```
 server/   server.js (HTTP + REST API, reports)  db.js (schema + demo seed)  security.js (auth, roles)
-public/   index.html  app.css  js/core.js (API, offline queue, UI kit, charts)  js/views.js (pages)  js/main.js (shell, router, palette)  sw.js (offline)
+public/   index.html  app.css  js/core.js (API, offline queue, UI kit, charts)  js/views.js + js/views2.js (pages)  js/main.js (shell, router, palette)  sw.js (offline)
+tests/    api.test.js (node:test end-to-end tests)
 desktop/  main.js (Electron shell)
 ```

@@ -1,6 +1,6 @@
 // Service worker: installable app + offline shell. Static files cache-first, GET API network-first with cached fallback.
-const VERSION = 'smis-v1';
-const SHELL = ['/', '/index.html', '/app.css', '/js/main.js', '/js/core.js', '/js/views.js', '/icon.svg', '/manifest.webmanifest'];
+const VERSION = 'smis-v2';
+const SHELL = ['/', '/index.html', '/app.css', '/js/main.js', '/js/core.js', '/js/views.js', '/js/views2.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

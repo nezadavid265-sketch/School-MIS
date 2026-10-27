@@ -1,14 +1,16 @@
 // App shell: sign-in, role-based navigation, router, command palette (Ctrl+K), theme, language, offline/sync status.
 import { state, api, queue, t, esc, icon, toast, can, initials, localGet, localSet } from './core.js';
 import * as V from './views.js';
+import * as W from './views2.js';
 
 const NAV = [
   ['Overview', [['Dashboard', '#/', 'home', 'dashboard'], ['My portal', '#/portal', 'user', 'portal']]],
-  ['People', [['Students', '#/students', 'cap', 'students'], ['Staff', '#/staff', 'idcard', 'leave']]],
-  ['Academics', [['Attendance', '#/attendance', 'check', 'attendance'], ['Marks & exams', '#/marks', 'clip', 'marks'], ['Timetable', '#/timetable', 'grid', 'timetable'], ['Academics', '#/academics', 'book', 'academics']]],
-  ['Finance', [['Finance', '#/finance', 'money', 'finance'], ['Payroll', '#/payroll', 'wallet', 'payroll']]],
-  ['Operations', [['Library', '#/library', 'library', 'library'], ['Inventory', '#/inventory', 'box', 'inventory'], ['Discipline', '#/discipline', 'flag', 'discipline']]],
-  ['Communication', [['Announcements', '#/announcements', 'megaphone', 'announcements'], ['Calendar', '#/calendar', 'calendar', 'calendar']]],
+  ['People', [['Students', '#/students', 'cap', 'students'], ['Admissions', '#/admissions', 'inbox', 'admissions'], ['Staff', '#/staff', 'idcard', 'leave'], ['Performance reviews', '#/reviews', 'star', 'reviews']]],
+  ['Academics', [['Attendance', '#/attendance', 'check', 'attendance'], ['Marks & exams', '#/marks', 'clip', 'marks'], ['Homework', '#/homework', 'pencil', 'homework'], ['Syllabus coverage', '#/syllabus', 'book', 'syllabus'], ['Timetable', '#/timetable', 'grid', 'timetable'], ['Promotion', '#/promotion', 'up', 'promotion'], ['Academics', '#/academics', 'cog', 'academics']]],
+  ['Finance', [['Finance', '#/finance', 'money', 'finance'], ['Payment plans', '#/plans', 'calendar', 'finance'], ['Reconciliation', '#/reconcile', 'bank', 'finance'], ['Procurement', '#/procurement', 'truck', 'procurement'], ['Payroll', '#/payroll', 'wallet', 'payroll']]],
+  ['Welfare', [['Boarding', '#/boarding', 'bed', 'boarding'], ['Transport', '#/transport', 'bus', 'transport'], ['Health', '#/health', 'heart', 'health'], ['Discipline', '#/discipline', 'flag', 'discipline']]],
+  ['Operations', [['Library', '#/library', 'library', 'library'], ['Inventory', '#/inventory', 'box', 'inventory'], ['Documents', '#/documents', 'doc', 'documents']]],
+  ['Communication', [['Announcements', '#/announcements', 'megaphone', 'announcements'], ['SMS & email', '#/messages', 'mail', 'messaging'], ['Calendar', '#/calendar', 'calendar', 'calendar']]],
   ['Insights', [['Reports', '#/reports', 'chart', 'reports']]],
   ['System', [['Users', '#/users', 'users', 'users'], ['Audit log', '#/audit', 'log', 'audit'], ['Settings', '#/settings', 'cog', 'dashboard']]],
 ];
@@ -19,8 +21,18 @@ const ROUTES = [
   [/^\/marks$/, V.marks, 'marks'], [/^\/reportcard\/(?<id>\d+)$/, V.reportCard], [/^\/finance$/, V.finance, 'finance'], [/^\/receipt\/(?<id>\d+)$/, V.receipt],
   [/^\/payroll$/, V.payroll, 'payroll'], [/^\/library$/, V.library, 'library'], [/^\/inventory$/, V.inventory, 'inventory'], [/^\/discipline$/, V.discipline, 'discipline'],
   [/^\/announcements$/, V.announcements, 'announcements'], [/^\/calendar$/, V.calendar, 'calendar'], [/^\/reports$/, V.reports, 'reports'],
-  [/^\/users$/, V.users, 'users'], [/^\/audit$/, V.audit, 'audit'], [/^\/settings$/, V.settings],
+  [/^\/admissions$/, W.admissions, 'admissions'], [/^\/promotion$/, W.promotion, 'promotion'], [/^\/homework$/, W.homework, 'homework'], [/^\/syllabus$/, W.syllabus, 'syllabus'],
+  [/^\/reviews$/, W.reviews, 'reviews'], [/^\/plans$/, W.plans, 'finance'], [/^\/reconcile$/, W.reconcile, 'finance'], [/^\/procurement$/, W.procurement, 'procurement'],
+  [/^\/transport$/, W.transport, 'transport'], [/^\/boarding$/, W.boarding, 'boarding'], [/^\/health$/, W.health, 'health'], [/^\/messages$/, W.messages, 'messaging'],
+  [/^\/documents$/, W.documents, 'documents'], [/^\/document\/(?<id>\d+)$/, W.documentView, 'documents'],
+  [/^\/users$/, V.users, 'users'], [/^\/audit$/, V.audit, 'audit'], [/^\/settings$/, settingsPage],
 ];
+
+async function settingsPage(el, p, q) {
+  await V.settings(el, p, q);
+  const g = el.querySelector('.grid');
+  if (g && state.user.staff_id) { g.insertAdjacentHTML('afterbegin', W.mfaCard()); W.bindMfa(el); }
+}
 
 const navItems = () => NAV.map(([g, items]) => [g, items.filter(([l, , , perm]) => can(perm) && !(l === 'Dashboard' && can('portal')))]).filter(([, items]) => items.length);
 const $ = (s) => document.querySelector(s);
@@ -33,7 +45,7 @@ window.smisSetTheme(localGet('smis.theme'));
 if (localGet('smis.font')) window.smisSetFont(localGet('smis.font'));
 
 // ---------- Sign-in ----------
-const DEMO = [['director', 'Director', 'chart'], ['headteacher', 'Head teacher', 'cap'], ['teacher', 'Teacher', 'clip'], ['bursar', 'Bursar', 'money'], ['hr', 'HR officer', 'idcard'], ['admin', 'Administrator', 'users'], ['parent', 'Parent', 'user'], ['student', 'Student', 'book'], ['sysadmin', 'System admin', 'shield']];
+const DEMO = [['director', 'Director', 'chart'], ['headteacher', 'Head teacher', 'cap'], ['teacher', 'Teacher', 'clip'], ['bursar', 'Bursar', 'money'], ['hr', 'HR officer', 'idcard'], ['admin', 'Administrator', 'users'], ['parent', 'Parent', 'user'], ['student', 'Student', 'book'], ['sysadmin', 'System admin', 'shield'], ['nurse', 'Nurse', 'heart']];
 function renderLogin(msg) {
   document.body.className = 'is-login';
   $('#app').innerHTML = `
@@ -55,6 +67,7 @@ function renderLogin(msg) {
         <form id="login" autocomplete="on">
           <label class="field"><span>${t('Username')}</span><input name="username" autocomplete="username" required autofocus></label>
           <label class="field"><span>${t('Password')}</span><div class="pw"><input name="password" type="password" autocomplete="current-password" required><button type="button" class="icon-btn" id="showpw" aria-label="Show password">👁</button></div></label>
+          <label class="field" id="mfa-row" hidden><span>6-digit code from your authenticator app</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" class="code-input" placeholder="123 456"></label>
           <p class="form-error" ${msg ? '' : 'hidden'}>${esc(msg || '')}</p>
           <button class="btn primary block" type="submit">${t('Sign in')}</button>
         </form>
@@ -65,7 +78,11 @@ function renderLogin(msg) {
   const form = $('#login');
   const submit = async () => {
     const b = form.querySelector('button[type=submit]'); b.disabled = true; b.classList.add('loading');
-    try { await api('/login', { method: 'POST', body: Object.fromEntries(new FormData(form)) }); await boot(); }
+    try {
+      const r = await api('/login', { method: 'POST', body: Object.fromEntries(new FormData(form)) });
+      if (r.mfa_required) { form.querySelector('#mfa-row').hidden = false; form.elements.code.required = true; form.elements.code.focus(); return; }
+      await boot();
+    }
     catch (e) { const er = form.querySelector('.form-error'); er.hidden = false; er.textContent = e.message; }
     finally { b.disabled = false; b.classList.remove('loading'); }
   };
@@ -110,7 +127,7 @@ function renderShell() {
   $('#sidebar').addEventListener('click', (e) => { if (e.target.closest('a')) toggleSide(false); });
   $('#open-palette').onclick = openPalette;
   $('#lang-top').value = state.lang; $('#lang-top').onchange = (e) => window.smisSetLang(e.target.value);
-  $('#theme-toggle').onclick = () => { const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches); window.smisSetTheme(dark ? 'light' : 'dark'); };
+  $('#theme-toggle').onclick = () => window.smisSetTheme(document.documentElement.dataset.theme === 'light' ? '' : 'light');
   updateNet();
 }
 
@@ -161,6 +178,12 @@ function openPalette() {
     can('finance', 'w') && { type: 'Action', label: 'Record an expense', href: '#/finance?tab=expenses&new=1', ic: 'wallet' },
     can('announcements', 'w') && { type: 'Action', label: 'Post an announcement', href: '#/announcements?new=1', ic: 'megaphone' },
     can('reports') && { type: 'Action', label: 'Executive summary report', href: '#/reports?r=executive', ic: 'chart' },
+    can('admissions', 'w') && { type: 'Action', label: 'New admission application', href: '#/admissions?new=1', ic: 'inbox' },
+    can('messaging', 'w') && { type: 'Action', label: 'Send SMS to parents', href: '#/messages', ic: 'mail' },
+    can('documents', 'w') && { type: 'Action', label: 'Print a student ID card / certificate', href: '#/documents', ic: 'doc' },
+    can('finance', 'w') && { type: 'Action', label: 'Import bank / Mobile Money statement', href: '#/reconcile', ic: 'bank' },
+    can('homework', 'w') && { type: 'Action', label: 'Set homework', href: '#/homework?new=1', ic: 'pencil' },
+    can('health', 'w') && { type: 'Action', label: 'Record a clinic visit', href: '#/health?new=1', ic: 'heart' },
     { type: 'Action', label: 'Toggle dark mode', run: () => $('#theme-toggle').click(), ic: 'moon' },
     { type: 'Action', label: t('Sign out'), run: () => $('#logout').click(), ic: 'logout' },
   ].filter(Boolean);

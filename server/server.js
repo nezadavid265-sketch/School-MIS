@@ -131,11 +131,98 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
     events: { perm: 'calendar', table: 'events', search: ['title'], filters: ['category'], cols: ['title', 'date', 'end_date', 'category', 'description'], select: 'SELECT * FROM events', order: 'date' },
     users: {
       perm: 'users', table: 'users', search: ['username', 'full_name'], filters: ['role', 'active'], cols: ['username', 'role', 'full_name', 'staff_id', 'student_id', 'active'],
-      select: 'SELECT id, username, role, full_name, staff_id, student_id, active, last_login, created_at FROM users', order: 'role, username', softDelete: { active: 0 },
+      select: 'SELECT id, username, role, full_name, staff_id, student_id, active, mfa_enabled, last_login, created_at FROM users', order: 'role, username', softDelete: { active: 0 },
       beforeCreate: (d) => { if (!sec.ROLES[d.role]) throw httpErr(400, 'Unknown role'); d.password_hash = sec.hashPassword(d.password || 'ChangeMe!2026'); },
     },
     audit_logs: { perm: 'audit', table: 'audit_logs', readOnly: true, search: ['username', 'action', 'entity', 'details'], filters: ['action', 'entity'], select: 'SELECT * FROM audit_logs', order: 'id DESC' },
+
+    applications: {
+      perm: 'admissions', table: 'applications', search: ['first_name', 'last_name', 'app_no', 'guardian_name', 'previous_school'], filters: ['status', 'applying_for'],
+      cols: ['first_name', 'last_name', 'gender', 'dob', 'applying_for', 'previous_school', 'previous_results', 'guardian_name', 'guardian_phone', 'guardian_email', 'address', 'status', 'interview_date', 'notes'],
+      select: 'SELECT * FROM applications', order: 'created_at DESC',
+      beforeCreate: (d) => { d.app_no = `APP-${new Date().getFullYear()}-${String((one('SELECT MAX(id) m FROM applications').m || 0) + 1).padStart(4, '0')}`; if (!d.status) d.status = 'Submitted'; },
+    },
+    homework: {
+      perm: 'homework', table: 'homework', search: ['title', 'subject_name'], filters: ['class_id', 'subject_id'], cols: ['class_id', 'subject_id', 'title', 'description', 'assigned_on', 'due_on'],
+      select: `SELECT h.*, c.name class_name, s.name subject_name, u.full_name teacher FROM homework h JOIN classes c ON c.id=h.class_id JOIN subjects s ON s.id=h.subject_id LEFT JOIN users u ON u.id=h.created_by`, order: 'due_on DESC',
+      scope: (u) => { const c = classScope(u); return c === null ? null : { sql: `class_id IN (${c.map(() => '?').join(',') || 'NULL'})`, params: c }; },
+      beforeCreate: (d, u) => { d.created_by = u.id; if (!d.assigned_on) d.assigned_on = today(); if (u.role === 'teacher' && !teacherClasses(u).includes(Number(d.class_id))) throw httpErr(403, 'Not your class'); },
+    },
+    syllabus_topics: {
+      perm: 'syllabus', table: 'syllabus_topics', search: ['unit', 'subject_name'], filters: ['class_id', 'subject_id', 'term_id', 'status'], cols: ['class_id', 'subject_id', 'term_id', 'unit', 'status', 'covered_on'],
+      select: `SELECT t.*, c.name class_name, s.name subject_name, st.first_name||' '||st.last_name teacher FROM syllabus_topics t JOIN classes c ON c.id=t.class_id JOIN subjects s ON s.id=t.subject_id LEFT JOIN staff st ON st.id=t.teacher_id`, order: 'class_name, subject_name, unit',
+      scope: (u) => { const c = classScope(u); return c === null ? null : { sql: `class_id IN (${c.map(() => '?').join(',') || 'NULL'})`, params: c }; },
+      beforeCreate: (d, u) => { d.teacher_id = u.staff_id || null; },
+    },
+    staff_reviews: {
+      perm: 'reviews', table: 'staff_reviews', search: ['staff_name', 'period'], filters: ['staff_id', 'period'], cols: ['staff_id', 'period', 'rating', 'strengths', 'improvements'],
+      select: `SELECT r.*, s.first_name||' '||s.last_name staff_name, s.job_title, u.full_name reviewer FROM staff_reviews r JOIN staff s ON s.id=r.staff_id LEFT JOIN users u ON u.id=r.reviewer_id`, order: 'created_at DESC',
+      beforeCreate: (d, u) => { d.reviewer_id = u.id; },
+    },
+    payment_plans: {
+      perm: 'finance', table: 'payment_plans', filters: ['invoice_id'], cols: ['invoice_id', 'due_on', 'amount', 'note'],
+      select: `SELECT pp.*, i.invoice_no, s.first_name||' '||s.last_name student_name, s.adm_no, s.guardian_phone,
+               (SELECT COALESCE(SUM(amount),0) FROM payment_plans x WHERE x.invoice_id=pp.invoice_id AND (x.due_on < pp.due_on OR (x.due_on=pp.due_on AND x.id<=pp.id))) cumulative_due,
+               COALESCE((SELECT SUM(amount) FROM payments p WHERE p.invoice_id=pp.invoice_id AND p.reversed=0),0) paid_to_date
+               FROM payment_plans pp JOIN invoices i ON i.id=pp.invoice_id JOIN students s ON s.id=i.student_id`, order: 'due_on',
+    },
+    statement_lines: {
+      perm: 'finance', table: 'statement_lines', readOnly: true, search: ['reference', 'description', 'batch'], filters: ['status', 'batch', 'source'],
+      select: `SELECT l.*, p.receipt_no FROM statement_lines l LEFT JOIN payments p ON p.id=l.payment_id`, order: 'id DESC',
+    },
+    suppliers: { perm: 'procurement', table: 'suppliers', search: ['name', 'category', 'contact'], filters: ['category'], cols: ['name', 'category', 'contact', 'phone', 'email', 'tin'],
+      select: `SELECT s.*, (SELECT COALESCE(SUM(amount),0) FROM purchase_orders p WHERE p.supplier_id=s.id AND p.status<>'Cancelled') total_ordered FROM suppliers s`, order: 'name' },
+    purchase_orders: {
+      perm: 'procurement', table: 'purchase_orders', search: ['po_no', 'description', 'supplier_name'], filters: ['status', 'supplier_id'], cols: ['supplier_id', 'category', 'description', 'amount', 'ordered_on'],
+      select: `SELECT p.*, s.name supplier_name FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id`, order: 'id DESC', noDelete: true,
+      beforeCreate: (d, u) => { d.po_no = `PO-${new Date().getFullYear()}-${String((one('SELECT MAX(id) m FROM purchase_orders').m || 0) + 1).padStart(4, '0')}`; d.status = 'Draft'; d.created_by = u.id; if (!d.ordered_on) d.ordered_on = today(); },
+    },
+    vehicles: { perm: 'transport', table: 'vehicles', search: ['plate', 'model'], cols: ['plate', 'model', 'seats', 'insurance_until', 'inspection_until'], select: 'SELECT * FROM vehicles', order: 'plate' },
+    transport_routes: {
+      perm: 'transport', table: 'transport_routes', search: ['name', 'stops'], cols: ['name', 'vehicle_id', 'driver_id', 'stops', 'morning_time', 'fee'],
+      select: `SELECT r.*, v.plate, v.seats, st.first_name||' '||st.last_name driver, (SELECT COUNT(*) FROM student_transport x WHERE x.route_id=r.id) riders
+               FROM transport_routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id LEFT JOIN staff st ON st.id=r.driver_id`, order: 'name',
+    },
+    student_transport: {
+      perm: 'transport', table: 'student_transport', search: ['student_name', 'route_name', 'stop'], filters: ['route_id'], cols: ['student_id', 'route_id', 'stop'],
+      select: `SELECT x.*, s.first_name||' '||s.last_name student_name, s.adm_no, c.name class_name, s.guardian_phone, r.name route_name FROM student_transport x
+               JOIN students s ON s.id=x.student_id LEFT JOIN classes c ON c.id=s.class_id JOIN transport_routes r ON r.id=x.route_id`, order: 'route_name, student_name',
+      beforeCreate: (d) => { const r = one('SELECT r.id, v.seats, (SELECT COUNT(*) FROM student_transport x WHERE x.route_id=r.id) n FROM transport_routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id WHERE r.id=?', d.route_id); if (r && r.seats && r.n >= r.seats) throw httpErr(409, 'This route is full — all bus seats are taken'); },
+    },
+    dormitories: {
+      perm: 'boarding', table: 'dormitories', search: ['name'], cols: ['name', 'gender', 'capacity', 'patron_id'],
+      select: `SELECT d.*, st.first_name||' '||st.last_name patron, (SELECT COUNT(*) FROM dorm_allocations a WHERE a.dorm_id=d.id) occupied FROM dormitories d LEFT JOIN staff st ON st.id=d.patron_id`, order: 'name',
+    },
+    dorm_allocations: {
+      perm: 'boarding', table: 'dorm_allocations', search: ['student_name', 'dorm_name', 'bed'], filters: ['dorm_id'], cols: ['student_id', 'dorm_id', 'bed', 'allocated_on'],
+      select: `SELECT a.*, s.first_name||' '||s.last_name student_name, s.adm_no, s.gender, c.name class_name, d.name dorm_name FROM dorm_allocations a
+               JOIN students s ON s.id=a.student_id LEFT JOIN classes c ON c.id=s.class_id JOIN dormitories d ON d.id=a.dorm_id`, order: 'dorm_name, bed',
+      beforeCreate: (d) => {
+        const dm = one('SELECT d.*, (SELECT COUNT(*) FROM dorm_allocations a WHERE a.dorm_id=d.id) n FROM dormitories d WHERE id=?', d.dorm_id);
+        const st = one('SELECT gender FROM students WHERE id=?', d.student_id);
+        if (dm && dm.n >= dm.capacity) throw httpErr(409, `${dm.name} is full (${dm.capacity} beds)`);
+        if (dm && st && dm.gender && st.gender && dm.gender !== st.gender) throw httpErr(409, `${dm.name} is for ${dm.gender === 'M' ? 'boys' : 'girls'} only`);
+        if (!d.allocated_on) d.allocated_on = today();
+      },
+    },
+    health_records: {
+      perm: 'health', table: 'health_records', search: ['student_name', 'details', 'record_type'], filters: ['record_type', 'student_id'], cols: ['student_id', 'date', 'record_type', 'details', 'action_taken', 'guardian_informed'],
+      select: `SELECT h.*, s.first_name||' '||s.last_name student_name, s.adm_no, c.name class_name, s.guardian_phone FROM health_records h JOIN students s ON s.id=h.student_id LEFT JOIN classes c ON c.id=s.class_id`, order: 'date DESC',
+      beforeCreate: (d, u) => { d.recorded_by = u.id; if (!d.date) d.date = today(); },
+    },
+    messages: { perm: 'messaging', table: 'messages', readOnly: true, search: ['body', 'audience', 'subject'], filters: ['channel', 'status'], select: `SELECT m.*, u.full_name sender FROM messages m LEFT JOIN users u ON u.id=m.created_by`, order: 'id DESC' },
+    documents: {
+      perm: 'documents', table: 'documents', readOnly: true, search: ['ref_no', 'doc_type', 'person'], filters: ['doc_type', 'student_id'],
+      select: `SELECT d.*, COALESCE(s.first_name||' '||s.last_name, st.first_name||' '||st.last_name) person, u.full_name issued_by_name FROM documents d
+               LEFT JOIN students s ON s.id=d.student_id LEFT JOIN staff st ON st.id=d.staff_id LEFT JOIN users u ON u.id=d.issued_by`, order: 'id DESC',
+    },
   };
+  // Classes whose records a user may see: null = all
+  function classScope(u) {
+    if (u.role === 'teacher') return teacherClasses(u);
+    if (u.role === 'parent' || u.role === 'student') { const ids = visibleStudents(u); return q(`SELECT DISTINCT class_id id FROM students WHERE id IN (${ids.map(() => '?').join(',') || 'NULL'})`, ...ids).map((x) => x.id); }
+    return null;
+  }
 
   function httpErr(status, message) { const e = new Error(message); e.status = status; return e; }
 
@@ -308,6 +395,22 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
       const rows = q('SELECT month, COUNT(*) staff, SUM(gross) gross, SUM(deductions) deductions, SUM(net) net, MIN(status) status FROM payroll GROUP BY month ORDER BY month DESC');
       return { columns: ['month', 'staff', 'gross', 'deductions', 'net', 'status'], money: ['gross', 'deductions', 'net'], rows, chart: { type: 'bar', label: 'month', series: ['net'] } };
     } },
+    syllabus: { perm: 'syllabus', title: 'Syllabus coverage', run: (p) => {
+      const rows = q(`SELECT c.name class, s.name subject, COUNT(*) units, SUM(t.status='Covered') covered, SUM(t.status='In progress') in_progress,
+        ROUND(100.0*SUM(t.status='Covered')/COUNT(*),1) coverage FROM syllabus_topics t JOIN classes c ON c.id=t.class_id JOIN subjects s ON s.id=t.subject_id
+        WHERE t.term_id=? ${p.class_id ? 'AND c.id=?' : ''} GROUP BY c.id, s.id ORDER BY coverage`, p.term_id || currentTerm().id, ...(p.class_id ? [p.class_id] : []));
+      return { columns: ['class', 'subject', 'units', 'covered', 'in_progress', 'coverage'], rows };
+    } },
+    admissions: { perm: 'admissions', title: 'Admissions pipeline', run: () => {
+      const rows = q(`SELECT applying_for level, COUNT(*) applications, SUM(status IN ('Submitted','Interview','Waitlisted')) in_progress, SUM(status='Accepted') accepted,
+        SUM(status='Enrolled') enrolled, SUM(status='Rejected') rejected FROM applications GROUP BY applying_for ORDER BY applying_for`);
+      return { columns: ['level', 'applications', 'in_progress', 'accepted', 'enrolled', 'rejected'], rows, chart: { type: 'bar', label: 'level', series: ['applications', 'enrolled'] } };
+    } },
+    reconciliation: { perm: 'finance', title: 'Bank & Mobile Money reconciliation', run: () => {
+      const rows = q(`SELECT batch, source, COUNT(*) lines, SUM(amount) total, SUM(status='Matched') matched, SUM(status='Amount mismatch') mismatch, SUM(status='Unmatched') unmatched, SUM(status='Ignored') ignored
+        FROM statement_lines GROUP BY batch ORDER BY MAX(id) DESC`);
+      return { columns: ['batch', 'source', 'lines', 'total', 'matched', 'mismatch', 'unmatched', 'ignored'], money: ['total'], rows };
+    } },
     executive: { perm: 'reports', title: 'Executive summary', run: (p) => {
       const termId = p.term_id || currentTerm().id;
       const f = financeSummary(termId);
@@ -353,8 +456,8 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
     const token = cookies(req).sid;
     if (!token) return null;
     const s = one('SELECT * FROM sessions WHERE token=?', token);
-    if (!s || s.expires_at < Date.now()) { if (s) run('DELETE FROM sessions WHERE token=?', token); return null; }
-    const u = one('SELECT id, username, role, full_name, staff_id, student_id, active FROM users WHERE id=?', s.user_id);
+    if (!s || s.expires_at < Date.now() || (s.created_at && Date.now() - s.created_at > SESSION_MS)) { if (s) run('DELETE FROM sessions WHERE token=?', token); return null; }
+    const u = one('SELECT id, username, role, full_name, staff_id, student_id, active, mfa_enabled FROM users WHERE id=?', s.user_id);
     if (!u || !u.active) return null;
     run('UPDATE sessions SET expires_at=? WHERE token=?', Date.now() + IDLE_MS, token);
     u.token = token;
@@ -396,10 +499,17 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
         sec.recordFail(key); audit(null, 'login_failed', 'users', null, { username: body.username }, ip);
         throw httpErr(401, 'Incorrect username or password');
       }
+      if (u.mfa_enabled) {
+        if (!body.code) return send(res, 200, { mfa_required: true });
+        if (!sec.verifyTotp(u.mfa_secret, body.code)) {
+          sec.recordFail(key); audit(u, 'mfa_failed', 'users', u.id, null, ip);
+          throw httpErr(401, 'The 6-digit code is not correct. Check the time on your phone and try again.');
+        }
+      }
       sec.clearFails(key);
       const token = sec.newToken();
       run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
-      run('INSERT INTO sessions(token,user_id,expires_at,ip) VALUES(?,?,?,?)', token, u.id, Date.now() + IDLE_MS, ip);
+      run('INSERT INTO sessions(token,user_id,expires_at,ip,created_at) VALUES(?,?,?,?,?)', token, u.id, Date.now() + IDLE_MS, ip, Date.now());
       run('UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?', u.id);
       audit(u, 'login', 'users', u.id, null, ip);
       const secure = req.headers['x-forwarded-proto'] === 'https' || req.socket.encrypted ? '; Secure' : '';
@@ -416,7 +526,7 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
 
     if (p === '/me') {
       const perms = Object.fromEntries(Object.keys(sec.PERMS).map((m) => [m, { r: sec.can(u.role, m), w: sec.can(u.role, m, 'w') }]));
-      return send(res, 200, { user: { id: u.id, username: u.username, role: u.role, roleLabel: sec.ROLES[u.role].label, full_name: u.full_name, staff_id: u.staff_id, student_id: u.student_id }, perms });
+      return send(res, 200, { user: { id: u.id, username: u.username, role: u.role, roleLabel: sec.ROLES[u.role].label, full_name: u.full_name, staff_id: u.staff_id, student_id: u.student_id, mfa_enabled: !!u.mfa_enabled, privileged: sec.PRIVILEGED.includes(u.role) }, perms });
     }
 
     if (p === '/password' && method === 'POST') {
@@ -451,6 +561,7 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
       if (method === 'GET') {
         need(u, def.perm);
         if (id) { if (!inScope(def, u, id)) throw httpErr(404, 'Not found'); const row = one(`SELECT * FROM (${def.select}) t WHERE id=?`, id); if (!row) throw httpErr(404, 'Not found'); return send(res, 200, stripHidden(def, u, row)); }
+        if (res_ === 'health_records') audit(u, 'view_health', 'health_records', query.student_id || null, null, ip);
         return send(res, 200, listResource(res_, u, query));
       }
       if (def.readOnly) throw httpErr(405, 'This record type cannot be edited directly');
@@ -470,6 +581,7 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
       if (!before) throw httpErr(404, 'Not found');
       if (method === 'PUT') {
         if (res_ === 'expenses' && before.status !== 'Pending') throw httpErr(409, 'Approved or rejected expenses are locked');
+        if (res_ === 'purchase_orders' && before.status !== 'Draft') throw httpErr(409, 'Only draft purchase orders can be edited');
         const d = pickCols(def, u, body);
         const keys = Object.keys(d);
         if (keys.length) run(`UPDATE ${def.table} SET ${keys.map((k) => `${k}=?`).join(',')} WHERE id=?`, ...keys.map((k) => d[k]), id);
@@ -525,6 +637,15 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
         out.todayLessons = q(`SELECT t.period, c.name class_name, s.name subject, t.room FROM timetable t JOIN classes c ON c.id=t.class_id JOIN subjects s ON s.id=t.subject_id
           WHERE t.teacher_id=? AND t.day=? ORDER BY t.period`, u.staff_id || -1, day);
       }
+      if (sec.can(u.role, 'admissions')) out.newApplications = one("SELECT COUNT(*) n FROM applications WHERE status IN ('Submitted','Interview')").n;
+      if (sec.can(u.role, 'approve_po', 'w')) out.poAwaiting = one("SELECT COUNT(*) n FROM purchase_orders WHERE status='Draft'").n;
+      if (sec.can(u.role, 'finance')) {
+        out.unmatchedLines = one("SELECT COUNT(*) n FROM statement_lines WHERE status IN ('Unmatched','Amount mismatch')").n;
+        out.overdueInstalments = q('SELECT * FROM (' + R.payment_plans.select + ") t WHERE due_on < date('now') AND paid_to_date < cumulative_due").length;
+      }
+      if (sec.can(u.role, 'transport')) out.vehicleAlerts = q("SELECT plate, insurance_until, inspection_until FROM vehicles WHERE insurance_until <= date('now','+30 days') OR inspection_until <= date('now','+30 days')");
+      if (sec.can(u.role, 'health')) out.healthToday = q("SELECT h.*, s.first_name||' '||s.last_name student_name FROM health_records h JOIN students s ON s.id=h.student_id ORDER BY h.date DESC, h.id DESC LIMIT 6");
+      if (sec.can(u.role, 'syllabus') && u.role !== 'teacher') out.syllabus = one("SELECT ROUND(100.0*SUM(status='Covered')/MAX(COUNT(*),1),1) rate FROM syllabus_topics").rate;
       if (sec.can(u.role, 'library')) out.overdueBooks = one("SELECT COUNT(*) n FROM book_loans WHERE returned_on IS NULL AND due_on < date('now')").n;
       if (sec.can(u.role, 'inventory')) out.lowStock = q('SELECT item, quantity, unit FROM inventory WHERE quantity < 20 ORDER BY quantity');
       if (u.role === 'sysadmin') {
@@ -545,7 +666,9 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
         const inv = listResource('invoices', u, { student_id: id }).rows;
         const results = studentTermResults(s.class_id, term.id).rows.find((r) => r.id === id);
         const recent = q("SELECT date, status FROM student_attendance WHERE student_id=? ORDER BY date DESC LIMIT 10", id);
-        return { student: s, attendance: att, recent, invoices: inv, balance: inv.reduce((a, b) => a + Math.max(0, b.balance), 0), results };
+        const homework = q("SELECT h.*, sj.name subject_name FROM homework h JOIN subjects sj ON sj.id=h.subject_id WHERE h.class_id=? AND h.due_on >= date('now','-2 days') ORDER BY h.due_on", s.class_id);
+        const plan = q('SELECT * FROM (' + R.payment_plans.select + ') t WHERE invoice_id IN (SELECT id FROM invoices WHERE student_id=?)', id);
+        return { student: s, attendance: att, recent, homework, plan, invoices: inv, balance: inv.reduce((a, b) => a + Math.max(0, b.balance), 0), results };
       });
       return send(res, 200, { kids, term });
     }
@@ -566,6 +689,10 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
         out.payments = listResource('payments', { role: 'bursar' }, { student_id: id }).rows;
       }
       if (sec.can(u.role, 'discipline')) out.discipline = q('SELECT * FROM discipline WHERE student_id=? ORDER BY date DESC', id);
+      if (sec.can(u.role, 'health')) out.health = q('SELECT * FROM health_records WHERE student_id=? ORDER BY date DESC', id);
+      out.transport = one('SELECT r.name route, st.stop, r.morning_time FROM student_transport st JOIN transport_routes r ON r.id=st.route_id WHERE st.student_id=?', id) || null;
+      out.dorm = one('SELECT d.name dorm, a.bed FROM dorm_allocations a JOIN dormitories d ON d.id=a.dorm_id WHERE a.student_id=?', id) || null;
+      out.history = q('SELECT * FROM enrollment_history WHERE student_id=? ORDER BY id DESC', id);
       out.loans = q('SELECT l.*, b.title FROM book_loans l JOIN books b ON b.id=l.book_id WHERE l.student_id=? ORDER BY borrowed_on DESC', id);
       audit(u, 'view_profile', 'students', id, null, ip);
       return send(res, 200, out);
@@ -872,6 +999,239 @@ function createServer({ dbFile = process.env.SMIS_DB || path.join(ROOT, 'data', 
       need(u, 'settings');
       const nets = Object.values(os.networkInterfaces()).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address);
       return send(res, 200, { node: process.version, platform: `${os.type()} ${os.release()}`, dbFile, dbSize: fs.statSync(dbFile).size, lanAddresses: nets, port: server.address()?.port, uptime: process.uptime() });
+    }
+
+    // ---- Two-step sign-in (TOTP) ----
+    if (p === '/mfa/setup' && method === 'POST') {
+      if (u.mfa_enabled) throw httpErr(409, 'Two-step sign-in is already on');
+      const secret = sec.newTotpSecret();
+      run('UPDATE users SET mfa_secret=? WHERE id=?', secret, u.id);
+      const label = encodeURIComponent(`${setting('school_name') || 'SMIS'}:${u.username}`);
+      return send(res, 200, { secret, otpauth: `otpauth://totp/${label}?secret=${secret}&issuer=SMIS&digits=6&period=30` });
+    }
+    if (p === '/mfa/enable' && method === 'POST') {
+      const row = one('SELECT mfa_secret FROM users WHERE id=?', u.id);
+      if (!row.mfa_secret || !sec.verifyTotp(row.mfa_secret, body.code)) throw httpErr(400, 'That code is not correct — enter the 6 digits shown in your authenticator app');
+      run('UPDATE users SET mfa_enabled=1 WHERE id=?', u.id);
+      audit(u, 'mfa_enabled', 'users', u.id, null, ip);
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/mfa/disable' && method === 'POST') {
+      const row = one('SELECT password_hash FROM users WHERE id=?', u.id);
+      if (!sec.verifyPassword(String(body.password || ''), row.password_hash)) throw httpErr(400, 'Password is incorrect');
+      run('UPDATE users SET mfa_enabled=0, mfa_secret=NULL WHERE id=?', u.id);
+      audit(u, 'mfa_disabled', 'users', u.id, null, ip);
+      return send(res, 200, { ok: true });
+    }
+    m = p.match(/^\/users\/(\d+)\/mfa-reset$/);
+    if (m && method === 'POST') {
+      need(u, 'users', 'w');
+      run('UPDATE users SET mfa_enabled=0, mfa_secret=NULL WHERE id=?', m[1]);
+      audit(u, 'mfa_reset', 'users', m[1], null, ip);
+      return send(res, 200, { ok: true });
+    }
+
+    // ---- Admissions ----
+    m = p.match(/^\/admissions\/(\d+)\/enroll$/);
+    if (m && method === 'POST') {
+      need(u, 'admissions', 'w');
+      const a = one('SELECT * FROM applications WHERE id=?', m[1]);
+      if (!a) throw httpErr(404, 'Application not found');
+      if (a.status !== 'Accepted') throw httpErr(409, 'Only accepted applications can be enrolled');
+      if (!body.class_id) throw httpErr(400, 'Choose a class');
+      const term = currentTerm();
+      const out = tx(db, () => {
+        const admNo = `${new Date().getFullYear()}-${String((one('SELECT MAX(id) m FROM students').m || 0) + 1).padStart(4, '0')}`;
+        const r = run(`INSERT INTO students(adm_no,first_name,last_name,gender,dob,class_id,guardian_name,guardian_phone,guardian_email,address,boarding,enrolled_on,notes)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, admNo, a.first_name, a.last_name, a.gender, a.dob, body.class_id, a.guardian_name, a.guardian_phone, a.guardian_email, a.address,
+          body.boarding || 'Day', today(), `Admitted from ${a.app_no}. Previous school: ${a.previous_school || '-'}`);
+        const sid = Number(r.lastInsertRowid);
+        run("UPDATE applications SET status='Enrolled', student_id=? WHERE id=?", sid, a.id);
+        run("INSERT INTO enrollment_history(student_id,year_name,to_class,action,decided_by) VALUES(?,?,?,'Admitted',?)", sid, (one('SELECT name FROM academic_years WHERE is_current=1') || {}).name, (one('SELECT name FROM classes WHERE id=?', body.class_id) || {}).name, u.id);
+        // Bill the current term straight away if a fee structure exists
+        const fees = q('SELECT amount, class_id FROM fee_structures WHERE term_id=?', term.id).filter((f) => f.class_id == null || f.class_id == body.class_id);
+        let invoice = null;
+        if (fees.length) {
+          const y = term.start_date.slice(0, 4);
+          const seq = Number((one('SELECT MAX(CAST(substr(invoice_no, -5) AS INTEGER)) m FROM invoices WHERE invoice_no LIKE ?', `INV-${y}-%`) || {}).m || 0) + 1;
+          invoice = `INV-${y}-${String(seq).padStart(5, '0')}`;
+          run('INSERT INTO invoices(invoice_no,student_id,term_id,amount,issued_on,due_on,created_by) VALUES(?,?,?,?,?,?,?)', invoice, sid, term.id, fees.reduce((x, f) => x + f.amount, 0), today(), today(), u.id);
+        }
+        return { student_id: sid, adm_no: admNo, invoice };
+      });
+      audit(u, 'enroll', 'applications', a.id, out, ip);
+      return send(res, 200, out);
+    }
+
+    // ---- Promotion / repetition / graduation ----
+    if (p === '/promotion/preview') {
+      need(u, 'promotion');
+      const pass = Number(setting('pass_mark') || 50);
+      const r = studentTermResults(Number(query.class_id), Number(query.term_id || currentTerm().id));
+      return send(res, 200, { pass, rows: r.rows.map((x) => ({ id: x.id, name: x.name, adm_no: x.adm_no, average: x.average, position: x.position, suggested: x.average == null ? 'Repeat' : x.average >= pass ? 'Promote' : 'Repeat' })) });
+    }
+    if (p === '/promotion' && method === 'POST') {
+      need(u, 'promotion', 'w');
+      const from = one('SELECT * FROM classes WHERE id=?', body.class_id);
+      const to = body.to_class_id ? one('SELECT * FROM classes WHERE id=?', body.to_class_id) : null;
+      if (!from) throw httpErr(400, 'Unknown class');
+      if ((body.decisions || []).some((d) => d.action === 'Promote') && !to) throw httpErr(400, 'Choose the class students are promoted to');
+      const year = (one('SELECT name FROM academic_years WHERE is_current=1') || {}).name;
+      const counts = { Promote: 0, Repeat: 0, Graduate: 0 };
+      tx(db, () => {
+        for (const d of body.decisions || []) {
+          const st = one('SELECT id FROM students WHERE id=? AND class_id=?', d.student_id, from.id);
+          if (!st || !counts.hasOwnProperty(d.action)) continue;
+          if (d.action === 'Promote') run('UPDATE students SET class_id=? WHERE id=?', to.id, st.id);
+          if (d.action === 'Graduate') run("UPDATE students SET status='Graduated' WHERE id=?", st.id);
+          run('INSERT INTO enrollment_history(student_id,year_name,from_class,to_class,action,average,decided_by) VALUES(?,?,?,?,?,?,?)',
+            st.id, year, from.name, d.action === 'Promote' ? to.name : d.action === 'Repeat' ? from.name : null, d.action, d.average ?? null, u.id);
+          counts[d.action]++;
+        }
+      });
+      audit(u, 'promotion', 'classes', from.id, counts, ip);
+      return send(res, 200, { ok: true, ...counts });
+    }
+
+    // ---- Bank / Mobile Money reconciliation ----
+    if (p === '/reconcile/import' && method === 'POST') {
+      need(u, 'finance', 'w');
+      const rows = (body.rows || []).filter((r) => r && Number(r.amount) > 0);
+      if (!rows.length) throw httpErr(400, 'No statement lines with a positive amount were found');
+      const source = ['Bank', 'Mobile Money'].includes(body.source) ? body.source : 'Bank';
+      const batch = `${source === 'Bank' ? 'BK' : 'MM'}-${new Date().toISOString().slice(0, 16).replace(/\D/g, '')}`;
+      const res2 = { batch, matched: 0, mismatch: 0, duplicate: 0, unmatched: 0 };
+      tx(db, () => {
+        for (const r of rows) {
+          const ref = String(r.reference || '').trim();
+          const amount = Math.round(Number(r.amount));
+          if (ref && one('SELECT 1 FROM statement_lines WHERE reference=? AND source=?', ref, source)) { res2.duplicate++; continue; }
+          const pay = ref ? one('SELECT * FROM payments WHERE reference=? AND method=? AND reversed=0', ref, source) : null;
+          const status = pay ? (pay.amount === amount ? 'Matched' : 'Amount mismatch') : 'Unmatched';
+          run('INSERT INTO statement_lines(batch,source,line_date,reference,description,amount,status,payment_id,imported_by) VALUES(?,?,?,?,?,?,?,?,?)',
+            batch, source, r.date || today(), ref || null, r.description || '', amount, status, pay ? pay.id : null, u.id);
+          res2[status === 'Matched' ? 'matched' : status === 'Amount mismatch' ? 'mismatch' : 'unmatched']++;
+        }
+      });
+      audit(u, 'reconcile_import', 'statement_lines', batch, res2, ip);
+      return send(res, 200, res2);
+    }
+    m = p.match(/^\/reconcile\/(\d+)\/suggest$/);
+    if (m) {
+      need(u, 'finance');
+      const l = one('SELECT * FROM statement_lines WHERE id=?', m[1]);
+      if (!l) throw httpErr(404, 'Not found');
+      // Parents usually put the admission number in the payment narration
+      const adm = (String(l.description || '').match(/\d{4}-\d{4}/) || [])[0];
+      const rows = adm ? listResource('invoices', u, { q: adm, limit: 10 }).rows.filter((i) => i.balance > 0) : [];
+      return send(res, 200, { line: l, suggestions: rows });
+    }
+    m = p.match(/^\/reconcile\/(\d+)\/(post|ignore)$/);
+    if (m && method === 'POST') {
+      need(u, 'finance', 'w');
+      const l = one("SELECT * FROM statement_lines WHERE id=? AND status IN ('Unmatched','Amount mismatch')", m[1]);
+      if (!l) throw httpErr(409, 'This line is already resolved');
+      if (m[2] === 'ignore') { run("UPDATE statement_lines SET status='Ignored' WHERE id=?", l.id); audit(u, 'reconcile_ignore', 'statement_lines', l.id, { reason: body.reason }, ip); return send(res, 200, { ok: true }); }
+      if (l.status !== 'Unmatched') throw httpErr(409, 'Amount mismatches must be investigated — reverse the wrong payment first, then post this line');
+      const inv = one('SELECT * FROM invoices WHERE id=?', body.invoice_id);
+      if (!inv) throw httpErr(400, 'Choose the invoice this money belongs to');
+      const y = new Date().getFullYear();
+      const pay = tx(db, () => {
+        const seq = Number((one('SELECT MAX(CAST(substr(receipt_no, -5) AS INTEGER)) m FROM payments WHERE receipt_no LIKE ?', `RC-${y}-%`) || {}).m || 0) + 1;
+        const receipt = `RC-${y}-${String(seq).padStart(5, '0')}`;
+        const r = run('INSERT INTO payments(receipt_no,invoice_id,student_id,amount,method,reference,paid_on,recorded_by) VALUES(?,?,?,?,?,?,?,?)', receipt, inv.id, inv.student_id, l.amount, l.source, l.reference || `${l.batch}-${l.id}`, l.line_date, u.id);
+        run("UPDATE statement_lines SET status='Matched', payment_id=? WHERE id=?", Number(r.lastInsertRowid), l.id);
+        return { id: Number(r.lastInsertRowid), receipt_no: receipt };
+      });
+      audit(u, 'reconcile_post', 'payments', pay.id, { line: l.id, invoice: inv.invoice_no, amount: l.amount }, ip);
+      return send(res, 200, pay);
+    }
+
+    // ---- Purchase orders: Draft → Approved → Received → Paid (creates the expense) ----
+    m = p.match(/^\/purchase-orders\/(\d+)\/(approve|receive|pay|cancel)$/);
+    if (m && method === 'POST') {
+      const po = one('SELECT p.*, s.name supplier FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=?', m[1]);
+      if (!po) throw httpErr(404, 'Not found');
+      const flow = { approve: ['Draft', 'Approved', 'approve_po'], receive: ['Approved', 'Received', 'procurement'], pay: ['Received', 'Paid', 'finance'], cancel: ['Draft', 'Cancelled', 'procurement'] }[m[2]];
+      need(u, flow[2], 'w');
+      if (po.status !== flow[0] && !(m[2] === 'cancel' && po.status === 'Approved')) throw httpErr(409, `This order is ${po.status}; it must be ${flow[0]} first`);
+      tx(db, () => {
+        if (m[2] === 'pay') {
+          const e = run("INSERT INTO expenses(category,description,supplier,amount,spent_on,status,recorded_by,approved_by) VALUES(?,?,?,?,?,'Approved',?,?)", po.category, `${po.po_no}: ${po.description}`, po.supplier, po.amount, today(), u.id, po.approved_by);
+          run("UPDATE purchase_orders SET status='Paid', expense_id=? WHERE id=?", Number(e.lastInsertRowid), po.id);
+        } else run(`UPDATE purchase_orders SET status=?${m[2] === 'approve' ? ', approved_by=?' : m[2] === 'receive' ? ', received_on=?' : ''} WHERE id=?`, flow[1], ...(m[2] === 'approve' ? [u.id] : m[2] === 'receive' ? [today()] : []), po.id);
+      });
+      audit(u, `po_${m[2]}`, 'purchase_orders', po.id, { po: po.po_no, amount: po.amount }, ip);
+      return send(res, 200, { ok: true });
+    }
+
+    // ---- Messaging (SMS / email) ----
+    if (p === '/messages' && method === 'POST') {
+      need(u, 'messaging', 'w');
+      const channel = body.channel === 'Email' ? 'Email' : 'SMS';
+      const addr = channel === 'SMS' ? 'guardian_phone' : 'guardian_email';
+      let list = [], audience = '';
+      const termId = currentTerm().id;
+      switch (body.audience) {
+        case 'class': list = q(`SELECT id student_id, guardian_name name, ${addr} address FROM students WHERE status='Active' AND class_id=?`, body.class_id); audience = `Guardians of ${(one('SELECT name FROM classes WHERE id=?', body.class_id) || {}).name}`; break;
+        case 'absentees': { const ids = chronicAbsentees().map((x) => x.id); list = q(`SELECT id student_id, guardian_name name, ${addr} address FROM students WHERE id IN (${ids.join(',') || 'NULL'})`); audience = 'Guardians of students with repeated absences'; break; }
+        case 'arrears': list = listResource('invoices', { role: 'bursar' }, { term_id: termId, limit: 5000 }).rows.filter((i) => i.balance > 0).map((i) => { const g = one(`SELECT guardian_name n, ${addr} a FROM students WHERE id=?`, i.student_id); return { student_id: i.student_id, name: g.n || i.student_name, balance: i.balance, address: g.a }; }); audience = 'Guardians with outstanding fees'; break;
+        case 'staff': list = q(`SELECT NULL student_id, first_name||' '||last_name name, ${channel === 'SMS' ? 'phone' : 'email'} address FROM staff WHERE status='Active'`); audience = 'All staff'; break;
+        default: list = q(`SELECT id student_id, guardian_name name, ${addr} address FROM students WHERE status='Active'`); audience = 'All guardians';
+      }
+      list = list.filter((x) => x.address);
+      const personalise = (x) => String(body.body || '').replace(/\{name\}/g, x.name || '').replace(/\{balance\}/g, x.balance != null ? `${x.balance.toLocaleString('en-US')} RWF` : '');
+      if (body.preview) return send(res, 200, { audience, count: list.length, sample: list.slice(0, 3).map((x) => ({ to: x.address, text: personalise(x) })) });
+      if (!String(body.body || '').trim()) throw httpErr(400, 'Write the message first');
+      if (!list.length) throw httpErr(400, 'Nobody in this audience has a ' + (channel === 'SMS' ? 'phone number' : 'email address'));
+      const webhook = process.env.SMIS_MESSAGE_WEBHOOK;
+      const msg = tx(db, () => {
+        const r = run('INSERT INTO messages(channel,audience,subject,body,recipients,status,created_by) VALUES(?,?,?,?,?,?,?)', channel, audience, body.subject || null, body.body, list.length, webhook ? 'Sending' : 'Queued', u.id);
+        const id = Number(r.lastInsertRowid);
+        const ins = db.prepare('INSERT INTO message_recipients(message_id,name,address,student_id) VALUES(?,?,?,?)');
+        list.forEach((x) => ins.run(id, x.name, x.address, x.student_id));
+        return id;
+      });
+      audit(u, 'message', 'messages', msg, { channel, audience, recipients: list.length }, ip);
+      // Hand off to the school's SMS/email gateway if one is configured (e.g. an aggregator's HTTP API)
+      if (webhook) {
+        fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel, subject: body.subject, messages: list.map((x) => ({ to: x.address, text: personalise(x) })) }) })
+          .then((r2) => { run('UPDATE messages SET status=? WHERE id=?', r2.ok ? 'Sent' : 'Failed', msg); run('UPDATE message_recipients SET status=? WHERE message_id=?', r2.ok ? 'Sent' : 'Failed', msg); })
+          .catch(() => run("UPDATE messages SET status='Failed' WHERE id=?", msg));
+      }
+      return send(res, 201, { id: msg, recipients: list.length, status: webhook ? 'Sending' : 'Queued', note: webhook ? null : 'No SMS/email gateway is configured yet. Messages are saved and can be exported for sending.' });
+    }
+    m = p.match(/^\/messages\/(\d+)\/recipients$/);
+    if (m) { need(u, 'messaging'); return send(res, 200, q('SELECT * FROM message_recipients WHERE message_id=?', m[1])); }
+
+    // ---- Official documents (numbered register) ----
+    if (p === '/documents' && method === 'POST') {
+      need(u, 'documents', 'w');
+      const types = ['Admission letter', 'Student ID card', 'Transfer certificate', 'Leaving certificate', 'Fee statement', 'Certificate of good conduct', 'Staff ID card', 'Employment letter'];
+      if (!types.includes(body.doc_type)) throw httpErr(400, 'Unknown document type');
+      const staffDoc = /Staff|Employment/.test(body.doc_type);
+      if (staffDoc ? !body.staff_id : !body.student_id) throw httpErr(400, `Choose the ${staffDoc ? 'staff member' : 'student'}`);
+      if (staffDoc && !sec.can(u.role, 'staff')) throw httpErr(403, 'Only HR and administration can issue staff documents');
+      const y = new Date().getFullYear();
+      const seq = (one('SELECT MAX(id) m FROM documents').m || 0) + 1;
+      const ref = `DOC-${y}-${String(seq).padStart(5, '0')}`;
+      const r = run('INSERT INTO documents(ref_no,doc_type,student_id,staff_id,notes,issued_by) VALUES(?,?,?,?,?,?)', ref, body.doc_type, staffDoc ? null : body.student_id, staffDoc ? body.staff_id : null, body.notes || null, u.id);
+      audit(u, 'document_issue', 'documents', r.lastInsertRowid, { ref, type: body.doc_type }, ip);
+      return send(res, 201, { id: Number(r.lastInsertRowid), ref_no: ref });
+    }
+    m = p.match(/^\/documents\/(\d+)$/);
+    if (m && method === 'GET') {
+      need(u, 'documents');
+      const d = one(`SELECT d.*, u.full_name issued_by_name FROM documents d LEFT JOIN users u ON u.id=d.issued_by WHERE d.id=?`, m[1]);
+      if (!d) throw httpErr(404, 'Not found');
+      const out = { doc: d, school: Object.fromEntries(q('SELECT key, value FROM school_settings').map((x) => [x.key, x.value])), year: (one('SELECT name FROM academic_years WHERE is_current=1') || {}).name };
+      if (d.student_id) {
+        out.student = one(`SELECT s.*, c.name class_name FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.id=?`, d.student_id);
+        if (d.doc_type === 'Fee statement') { out.invoices = listResource('invoices', { role: 'bursar' }, { student_id: d.student_id }).rows; out.payments = listResource('payments', { role: 'bursar' }, { student_id: d.student_id }).rows; }
+        if (/certificate/i.test(d.doc_type)) { out.history = q('SELECT * FROM enrollment_history WHERE student_id=? ORDER BY id', d.student_id); out.attendance = attendanceStats('a.student_id=?', [d.student_id]); }
+      }
+      if (d.staff_id) out.staff = one('SELECT id, staff_no, first_name, last_name, job_title, department, hired_on, phone FROM staff WHERE id=?', d.staff_id);
+      return send(res, 200, out);
     }
 
     throw httpErr(404, 'Unknown endpoint');

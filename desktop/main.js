@@ -13,23 +13,28 @@ const CONFIG = path.join(app.getPath('userData'), 'config.json');
 const readConfig = () => { try { return { mode: 'server', port: 3000, serverUrl: '', ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')) }; } catch { return { mode: 'server', port: 3000, serverUrl: '' }; } };
 const writeConfig = (c) => { fs.mkdirSync(path.dirname(CONFIG), { recursive: true }); fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2)); };
 
-let win, child, server;
+let win, child, server, activePort;
 const lan = () => Object.values(os.networkInterfaces()).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address);
 
 async function startLocalServer(port) {
   const dbFile = path.join(app.getPath('userData'), 'smis.db');
   process.env.SMIS_DB = dbFile;
   try {
-    // Preferred: run inside Electron's own Node runtime (needs node:sqlite support)
+    // Preferred: run inside Electron's own Node runtime (Electron 37+ ships node:sqlite)
     const { createServer } = require('../server/server.js');
     server = createServer({ dbFile });
-    await new Promise((res, rej) => { server.once('error', rej); server.listen(port, '0.0.0.0', res); });
+    // If the port is taken (e.g. another program), try the next few
+    for (let p = port, tries = 0; ; p++, tries++) {
+      try { await new Promise((res, rej) => { server.once('error', rej); server.listen(p, '0.0.0.0', res); }); port = p; break; }
+      catch (err) { if (err.code !== 'EADDRINUSE' || tries >= 9) throw err; }
+    }
   } catch (e) {
     // Fallback: system Node.js 22.5+ if installed
     child = spawn('node', [path.join(__dirname, '..', 'server', 'server.js')], { env: { ...process.env, PORT: String(port), SMIS_DB: dbFile }, stdio: 'ignore', windowsHide: true });
     await new Promise((r) => setTimeout(r, 1500));
     if (child.exitCode !== null) throw new Error(`Could not start the SMIS server (${e.message}). Install Node.js 22.5+ or switch to "Connect to server".`);
   }
+  activePort = port;
   return `http://localhost:${port}`;
 }
 
@@ -39,7 +44,7 @@ function buildMenu(cfg) {
       { label: cfg.mode === 'server' ? '✓ Mode: School server (this computer)' : 'Use this computer as the school server', click: () => switchMode({ ...cfg, mode: 'server' }) },
       { label: cfg.mode === 'client' ? `✓ Mode: Connected to ${cfg.serverUrl}` : 'Connect to another SMIS server…', click: askServerUrl },
       { type: 'separator' },
-      { label: 'Copy school network address', enabled: cfg.mode === 'server', click: () => { const a = lan().map((ip) => `http://${ip}:${cfg.port}`).join('  '); clipboard.writeText(a); dialog.showMessageBox(win, { message: 'Other computers and phones on the school Wi-Fi can open:', detail: a || 'No network connection found.' }); } },
+      { label: 'Copy school network address', enabled: cfg.mode === 'server', click: () => { const a = lan().map((ip) => `http://${ip}:${activePort || cfg.port}`).join('  '); clipboard.writeText(a); dialog.showMessageBox(win, { message: 'Other computers and phones on the school Wi-Fi can open:', detail: a || 'No network connection found.' }); } },
       { label: 'Open in web browser', click: () => shell.openExternal(win.webContents.getURL()) },
       { label: 'Show data folder (for backups)', click: () => shell.openPath(app.getPath('userData')) },
       { type: 'separator' }, { role: 'quit' },
@@ -61,11 +66,11 @@ function switchMode(cfg) { writeConfig(cfg); app.relaunch(); app.exit(0); }
 
 async function createWindow() {
   const cfg = readConfig();
-  win = new BrowserWindow({ width: 1360, height: 860, minWidth: 380, title: 'SMIS', backgroundColor: '#0f6b5c', webPreferences: { contextIsolation: true, sandbox: true } });
+  win = new BrowserWindow({ width: 1360, height: 860, minWidth: 380, title: 'SMIS', backgroundColor: '#070b18', webPreferences: { contextIsolation: true, sandbox: true } });
   buildMenu(cfg);
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   try {
-    const url = cfg.mode === 'client' && cfg.serverUrl ? cfg.serverUrl : await startLocalServer(cfg.port);
+    const url = cfg.mode === 'client' && cfg.serverUrl ? cfg.serverUrl : await startLocalServer(Number(process.env.SMIS_PORT) || cfg.port);
     await win.loadURL(url);
   } catch (e) {
     const r = await dialog.showMessageBox(win, { type: 'error', message: 'SMIS could not start', detail: e.message, buttons: ['Connect to a server…', 'Quit'] });

@@ -59,7 +59,10 @@ const DICT = {
     Overview: 'Incamake', People: 'Abantu', Operations: 'Ibikorwa', Communication: 'Itumanaho', Insights: 'Isesengura', System: 'Sisitemu',
     'Sign in': 'Injira', Username: 'Izina ukoresha', Password: 'Ijambobanga', Welcome: 'Murakaza neza', Present: 'Yaje', Absent: 'Ntiyaje', Late: 'Yakererewe',
     Excused: 'Yasabiye uruhushya', 'Mark all present': 'Bose baje', Export: 'Ohereza', Print: 'Capa', Class: 'Ishuri', Term: 'Igihembwe', Balance: 'Asigaye',
-    'Fees collected': 'Amafaranga yishyuwe', 'Average attendance': 'Ikigereranyo cyo kwitaba', Online: 'Kuri murandasi', Offline: 'Nta murandasi', 'Report card': 'Indangamanota' },
+    'Fees collected': 'Amafaranga yishyuwe', 'Average attendance': 'Ikigereranyo cyo kwitaba', Online: 'Kuri murandasi', Offline: 'Nta murandasi', 'Report card': 'Indangamanota',
+    Admissions: 'Kwakira abanyeshuri', 'Performance reviews': 'Isuzuma ry\'abakozi', Homework: 'Imikoro yo mu rugo', 'Syllabus coverage': 'Aho integanyanyigisho igeze',
+    Promotion: 'Kwimuka', 'Payment plans': 'Gahunda yo kwishyura', Reconciliation: 'Guhuza konti', Procurement: 'Amasoko', Welfare: 'Imibereho',
+    Boarding: 'Icumbi', Transport: 'Ingendo', Health: 'Ubuzima', Documents: 'Inyandiko', 'SMS & email': 'Ubutumwa' },
   fr: { Dashboard: 'Tableau de bord', 'My portal': 'Mon portail', Students: 'Élèves', Staff: 'Personnel', Academics: 'Scolarité', Timetable: 'Emploi du temps',
     Attendance: 'Présences', 'Marks & exams': 'Notes et examens', Finance: 'Finances', Payroll: 'Paie', Library: 'Bibliothèque', Inventory: 'Inventaire',
     Discipline: 'Discipline', Announcements: 'Annonces', Calendar: 'Calendrier', Reports: 'Rapports', Users: 'Utilisateurs', 'Audit log': 'Journal d\'audit',
@@ -67,7 +70,10 @@ const DICT = {
     Overview: 'Aperçu', People: 'Personnes', Operations: 'Opérations', Communication: 'Communication', Insights: 'Analyses', System: 'Système',
     'Sign in': 'Se connecter', Username: 'Nom d\'utilisateur', Password: 'Mot de passe', Welcome: 'Bienvenue', Present: 'Présent', Absent: 'Absent', Late: 'En retard',
     Excused: 'Excusé', 'Mark all present': 'Tous présents', Export: 'Exporter', Print: 'Imprimer', Class: 'Classe', Term: 'Trimestre', Balance: 'Solde',
-    'Fees collected': 'Frais encaissés', 'Average attendance': 'Présence moyenne', Online: 'En ligne', Offline: 'Hors ligne', 'Report card': 'Bulletin' },
+    'Fees collected': 'Frais encaissés', 'Average attendance': 'Présence moyenne', Online: 'En ligne', Offline: 'Hors ligne', 'Report card': 'Bulletin',
+    Admissions: 'Admissions', 'Performance reviews': 'Évaluations du personnel', Homework: 'Devoirs', 'Syllabus coverage': 'Avancement du programme',
+    Promotion: 'Passage de classe', 'Payment plans': 'Échéanciers', Reconciliation: 'Rapprochement', Procurement: 'Achats', Welfare: 'Vie scolaire',
+    Boarding: 'Internat', Transport: 'Transport', Health: 'Santé', Documents: 'Documents', 'SMS & email': 'SMS et e-mail' },
 };
 export const t = (s) => (DICT[state.lang] && DICT[state.lang][s]) || s;
 
@@ -118,6 +124,19 @@ const P = {
   globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.9 6h-3a15.6 15.6 0 0 0-1.4-3.6A8 8 0 0 1 18.9 8zM12 4a13.8 13.8 0 0 1 1.9 4h-3.8A13.8 13.8 0 0 1 12 4zM4.3 14a8.2 8.2 0 0 1 0-4h3.4a16.5 16.5 0 0 0 0 4zm.8 2h3a15.6 15.6 0 0 0 1.4 3.6A8 8 0 0 1 5.1 16zm3-8h-3a8 8 0 0 1 4.4-3.6A15.6 15.6 0 0 0 8.1 8zM12 20a13.8 13.8 0 0 1-1.9-4h3.8A13.8 13.8 0 0 1 12 20zm2.3-6H9.7a14.7 14.7 0 0 1 0-4h4.6a14.7 14.7 0 0 1 0 4zm.3 5.6a15.6 15.6 0 0 0 1.4-3.6h3a8 8 0 0 1-4.4 3.6zm1.7-5.6a16.5 16.5 0 0 0 0-4h3.4a8.2 8.2 0 0 1 0 4z',
   user: 'M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z',
   install: 'M4 4h16v11H4zm-2 13h20v2H2zm10-11v5.6l2.3-2.3 1.4 1.4L12 14.4l-3.7-3.7 1.4-1.4L12 11.6V6z',
+  bus: 'M5 3h14a2 2 0 0 1 2 2v12a2 2 0 0 1-1 1.7V21h-3v-2H7v2H4v-2.3A2 2 0 0 1 3 17V5a2 2 0 0 1 2-2zm0 3v5h14V6zm2 8a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm10 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
+  heart: 'M12 21s-8-5.1-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.9-8 11-8 11zm-1-12v2H9v2h2v2h2v-2h2v-2h-2V9z',
+  bed: 'M3 6h2v7h6V8h8a3 3 0 0 1 3 3v8h-2v-2H5v2H3zm5 1.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
+  mail: 'M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2.2V17h16V7.2l-8 5.3z',
+  doc: 'M6 2h8l6 6v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm7 1.5V9h5.5zM8 12v2h8v-2zm0 4v2h8v-2z',
+  truck: 'M2 5h12v10h1V8h4l3 4v5h-2a2.5 2.5 0 0 1-5 0H9a2.5 2.5 0 0 1-5 0H2zm15 5v2h3.5L19 10zM6.5 16a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm11 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  bank: 'M12 2 2 7v2h20V7zM4 11v7h3v-7zm6.5 0v7h3v-7zM17 11v7h3v-7zM2 20h20v2H2z',
+  key: 'M7 14a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm5.6-4A6 6 0 1 0 12.6 14H16v3h3v-3h2v-4z',
+  inbox: 'M4 3h16l2 10v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7zm1.6 2-1.4 7H9a3 3 0 0 0 6 0h4.8l-1.4-7z',
+  up: 'M12 3 4 11l1.4 1.4L11 6.8V21h2V6.8l5.6 5.6L20 11z',
+  pencil: 'M3 17.2V21h3.8L17.9 9.9l-3.8-3.8zm17.7-10.1a1 1 0 0 0 0-1.4l-2.4-2.4a1 1 0 0 0-1.4 0l-1.8 1.8 3.8 3.8z',
+  star: 'm12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z',
+  map: 'M9 3 3 5v16l6-2 6 2 6-2V3l-6 2zm0 2.2 6 2v11.6l-6-2z',
 };
 export const icon = (name, size = 20) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[name] || P.grid}"/></svg>`;
 
